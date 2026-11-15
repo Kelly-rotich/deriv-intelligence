@@ -151,25 +151,36 @@ function connect() {
       const select = $("market");
       select.innerHTML = "";
 
-      const volatilityMarkets = markets.filter(m =>
-        /volatility/i.test(m.display_name || "") ||
-        /^R_\d+/.test(m.symbol || "") ||
-        /^\d+HZ/.test(m.symbol || "")
-      );
+      
+const volatilityMarkets = markets.filter(m => {
+  const symbol = m.symbol || "";
+  const name = m.display_name || "";
 
-      volatilityMarkets.forEach(m => {
-        const option = document.createElement("option");
-        option.value = m.symbol;
-        option.textContent = m.display_name + " (" + m.symbol + ")";
-        select.appendChild(option);
-      });
+  return /volatility/i.test(name) ||
+         /^R_\d+/.test(symbol) ||
+         /^\d+HZ\d+V$/i.test(symbol);
+});
 
-      if (volatilityMarkets.length) {
-        select.value = volatilityMarkets[0].symbol;
-        chooseMarket();
-      } else {
-        status("Connected, but no matching markets found");
-      }
+const availableMarkets = volatilityMarkets.length
+  ? volatilityMarkets
+  : markets;
+
+availableMarkets.forEach(m => {
+  const option = document.createElement("option");
+  option.value = m.symbol;
+  option.textContent =
+    (m.display_name || m.symbol) + " (" + m.symbol + ")";
+  select.appendChild(option);
+});
+
+if (availableMarkets.length) {
+  select.value = availableMarkets[0].symbol;
+  status("Markets loaded: " + availableMarkets.length);
+  chooseMarket();
+} else {
+  status("Connected, but Deriv returned no active symbols");
+}
+
     }
 
     if (data.msg_type === "history") {
