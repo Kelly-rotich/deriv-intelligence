@@ -152,36 +152,36 @@ function connect() {
       select.innerHTML = "";
 
       
-const volatilityMarkets = markets.filter(m => {
-  const symbol = m.symbol || "";
-  const name = m.display_name || "";
 
-  return /volatility/i.test(name) ||
-         /^R_\d+/.test(symbol) ||
-         /^\d+HZ\d+V$/i.test(symbol);
-});
+const volatilityMarkets = markets.filter(m =>
+  /volatility/i.test(m.underlying_symbol_name || "") ||
+  /^R_\d+/.test(m.underlying_symbol || "") ||
+  /^\d+HZ/.test(m.underlying_symbol || "")
+);
 
 const availableMarkets = volatilityMarkets.length
   ? volatilityMarkets
   : markets;
 
 availableMarkets.forEach(m => {
+  const symbol = m.underlying_symbol;
+  if (!symbol) return;
+
   const option = document.createElement("option");
-  option.value = m.symbol;
+  option.value = symbol;
   option.textContent =
-    (m.display_name || m.symbol) + " (" + m.symbol + ")";
+    (m.underlying_symbol_name || symbol) + " (" + symbol + ")";
+
   select.appendChild(option);
 });
 
-if (availableMarkets.length) {
-  select.value = availableMarkets[0].symbol;
-  status("Markets loaded: " + availableMarkets.length);
+if (select.options.length) {
+  select.value = select.options[0].value;
+  status("Markets loaded: " + select.options.length);
   chooseMarket();
 } else {
-  status("Connected, but Deriv returned no active symbols");
+  status("Deriv returned no active symbols");
 }
-
-    }
 
     if (data.msg_type === "history") {
       ticks = (data.history.prices || []).map(Number);
