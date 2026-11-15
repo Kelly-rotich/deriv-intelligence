@@ -182,7 +182,7 @@ if (select.options.length) {
 } else {
   status("Deriv returned no active symbols");
 }
-
+    }  
     if (data.msg_type === "history") {
       ticks = (data.history.prices || []).map(Number);
       render();
