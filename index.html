@@ -1,0 +1,312 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deriv Intelligence</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b1020;color:#e8edf7;font-family:Arial,sans-serif}
+header{padding:20px;background:#111a2e;border-bottom:1px solid #29344b}
+h1{margin:0;color:#58b9ff;font-size:24px}
+small{color:#91a2bd}
+main{max-width:1100px;margin:auto;padding:18px}
+.panel{background:#141e32;border:1px solid #293851;border-radius:12px;padding:16px;margin-bottom:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.stat{background:#0c1527;padding:15px;border-radius:9px}
+.stat strong{display:block;font-size:25px;margin-top:9px}
+select,button{padding:12px;border-radius:7px;border:1px solid #34435e;background:#101a2d;color:white}
+button{background:#087bc4;cursor:pointer}
+.good{color:#35d69a}.bad{color:#ff7777}.muted{color:#91a2bd}
+.bar{height:9px;background:#26334b;border-radius:9px;overflow:hidden;margin-top:9px}
+.fill{height:100%;background:#20b98a;width:0%}
+.digits{display:grid;grid-template-columns:repeat(10,1fr);gap:5px;margin-top:12px}
+.digit{background:#0c1527;padding:9px 2px;text-align:center;border-radius:6px;font-size:13px}
+.digit b{display:block;margin-top:5px}
+#status{color:#ffc56c}
+footer{text-align:center;padding:20px;color:#8292aa;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+<h1>DERIV INTELLIGENCE</h1>
+<small>Live market analysis and statistical signals</small>
+</header>
+
+<main>
+<section class="panel">
+<h3>Market connection</h3>
+<p id="status">Disconnected</p>
+<button id="connect">Connect to Deriv</button>
+<p class="muted">Market data only. No trading or account access.</p>
+</section>
+
+<section class="panel">
+<h3>Market selection</h3>
+<select id="market" style="width:100%">
+<option value="">Connect to load markets</option>
+</select>
+<p id="price">Latest price: --</p>
+<p id="updated" class="muted">Waiting for data</p>
+</section>
+
+<div class="grid">
+<section class="stat">
+<small>Directional bias</small>
+<strong id="bias">--</strong>
+</section>
+<section class="stat">
+<small>Rise observations</small>
+<strong id="rise">--</strong>
+</section>
+<section class="stat">
+<small>Fall observations</small>
+<strong id="fall">--</strong>
+</section>
+<section class="stat">
+<small>Ticks collected</small>
+<strong id="count">0</strong>
+</section>
+</div>
+
+<section class="panel">
+<h3>Rise / Fall analysis</h3>
+<p id="direction">Waiting for sufficient market data</p>
+<div class="bar"><div class="fill" id="directionBar"></div></div>
+<p class="muted" id="directionInfo">Requires historical ticks.</p>
+</section>
+
+<section class="panel">
+<h3>Digits analysis</h3>
+<p class="muted">Last-digit distribution from collected ticks</p>
+<div class="digits" id="digits"></div>
+<p id="digitInfo" class="muted"></p>
+</section>
+
+<section class="panel">
+<h3>Digit contract statistics</h3>
+<p id="overUnder">Over / Under: waiting for data</p>
+<p id="evenOdd">Even / Odd: waiting for data</p>
+<p id="differs">Differs: waiting for data</p>
+</section>
+
+<section class="panel">
+<h3>Recent tick history</h3>
+<div id="history" class="muted">No ticks received.</div>
+</section>
+</main>
+
+<footer>
+DERIV INTELLIGENCE · Statistical analysis only · Not financial advice
+</footer>
+
+<script>
+const ENDPOINT =
+"wss://api.derivws.com/trading/v1/options/ws/public";
+
+let ws = null;
+let ticks = [];
+let markets = [];
+let selected = "";
+let subscription = null;
+
+const $ = id => document.getElementById(id);
+
+function status(message) {
+  $("status").textContent = message;
+}
+
+function send(data) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(data));
+  }
+}
+
+function connect() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    status("Already connected");
+    return;
+  }
+
+  status("Connecting...");
+  ws = new WebSocket(ENDPOINT);
+
+  ws.onopen = () => {
+    status("Connected to Deriv");
+    send({active_symbols:"brief", req_id:1});
+  };
+
+  ws.onmessage = event => {
+    const data = JSON.parse(event.data);
+
+    if (data.error) {
+      status("API error: " + data.error.message);
+      return;
+    }
+
+    if (data.msg_type === "active_symbols") {
+      markets = data.active_symbols || [];
+
+      const select = $("market");
+      select.innerHTML = "";
+
+      const volatilityMarkets = markets.filter(m =>
+        /volatility/i.test(m.display_name || "") ||
+        /^R_\d+/.test(m.symbol || "") ||
+        /^\d+HZ/.test(m.symbol || "")
+      );
+
+      volatilityMarkets.forEach(m => {
+        const option = document.createElement("option");
+        option.value = m.symbol;
+        option.textContent = m.display_name + " (" + m.symbol + ")";
+        select.appendChild(option);
+      });
+
+      if (volatilityMarkets.length) {
+        select.value = volatilityMarkets[0].symbol;
+        chooseMarket();
+      } else {
+        status("Connected, but no matching markets found");
+      }
+    }
+
+    if (data.msg_type === "history") {
+      ticks = (data.history.prices || []).map(Number);
+      render();
+    }
+
+    if (data.msg_type === "tick") {
+      const quote = Number(data.tick.quote);
+      if (Number.isFinite(quote)) {
+        ticks.push(quote);
+        if (ticks.length > 1000) ticks.shift();
+        render();
+      }
+    }
+  };
+
+  ws.onerror = () => status("Connection error");
+  ws.onclose = () => status("Disconnected");
+}
+
+function chooseMarket() {
+  selected = $("market").value;
+  if (!selected) return;
+
+  ticks = [];
+  render();
+
+  if (subscription) {
+    send({forget: subscription});
+    subscription = null;
+  }
+
+  send({
+    ticks_history:selected,
+    count:500,
+    end:"latest",
+    style:"ticks",
+    req_id:2
+  });
+
+  send({
+    ticks:selected,
+    subscribe:1,
+    req_id:3
+  });
+}
+
+function lastDigit(price) {
+  const str = String(price);
+  const decimal = str.split(".");
+  return Number((decimal[1] || "0").slice(-1));
+}
+
+function render() {
+  const n = ticks.length;
+  $("count").textContent = n;
+
+  if (!n) return;
+
+  const latest = ticks[n-1];
+  $("price").textContent = "Latest price: " + latest;
+  $("updated").textContent = "Live market selected: " + selected;
+
+  let rises = 0, falls = 0;
+  for (let i=1;i<n;i++) {
+    if (ticks[i] > ticks[i-1]) rises++;
+    if (ticks[i] < ticks[i-1]) falls++;
+  }
+
+  const total = rises + falls;
+  const risePct = total ? rises / total * 100 : 0;
+  const fallPct = total ? falls / total * 100 : 0;
+
+  $("rise").textContent = risePct.toFixed(1) + "%";
+  $("fall").textContent = fallPct.toFixed(1) + "%";
+
+  const bias = risePct > fallPct ? "RISE BIAS" :
+    fallPct > risePct ? "FALL BIAS" : "NEUTRAL";
+
+  $("bias").textContent = bias;
+  $("bias").className =
+    risePct > fallPct ? "good" :
+    fallPct > risePct ? "bad" : "";
+
+  $("direction").textContent = bias;
+  $("directionBar").style.width =
+    Math.max(risePct, fallPct) + "%";
+
+  $("directionInfo").textContent =
+    "Observed upward tick share: " + risePct.toFixed(1) +
+    "% | Downward tick share: " + fallPct.toFixed(1) +
+    "%. These are historical observations, not future probabilities.";
+
+  const frequency = Array(10).fill(0);
+  ticks.forEach(price => frequency[lastDigit(price)]++);
+
+  $("digits").innerHTML = frequency.map((v,d) => `
+    <div class="digit">${d}
+    <b>${(v/n*100).toFixed(1)}%</b></div>
+  `).join("");
+
+  const over = frequency.slice(5).reduce((a,b)=>a+b,0);
+  const under = frequency.slice(0,5).reduce((a,b)=>a+b,0);
+  const even = frequency[0]+frequency[2]+frequency[4]+
+    frequency[6]+frequency[8];
+  const odd = n-even;
+
+  $("overUnder").textContent =
+    "Over 4: " + (over/n*100).toFixed(1) +
+    "% | Under 5: " + (under/n*100).toFixed(1) + "%";
+
+  $("evenOdd").textContent =
+    "Even: " + (even/n*100).toFixed(1) +
+    "% | Odd: " + (odd/n*100).toFixed(1) + "%";
+
+  const most = frequency.indexOf(Math.max(...frequency));
+  $("differs").textContent =
+    "Most frequent digit: " + most +
+    " | Observed Differs rate against it: " +
+    ((n-frequency[most])/n*100).toFixed(1) + "%";
+
+  $("digitInfo").textContent =
+    "Observed digit frequencies. Each digit has a theoretical " +
+    "10% baseline under a uniform distribution.";
+
+  $("history").textContent =
+    ticks.slice(-12).reverse().join(" | ");
+}
+
+$("connect").addEventListener("click", connect);
+$("market").addEventListener("change", chooseMarket);
+
+$("digits").innerHTML =
+  Array.from({length:10},(_,d) =>
+    `<div class="digit">${d}<b>--</b></div>`
+  ).join("");
+</script>
+</body>
+</html>
